@@ -128,6 +128,5 @@ Receiving errors for TTL 1...
 ## 🧠 Credits
 
 Originally based on `tracepath` by Alexey Kuznetsov.  
-Extended by Omer Reuven to support IOAM decoding, Linux namespace simulation, and diagnostic tooling for research use.
 
 ---
