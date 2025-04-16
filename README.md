@@ -4,6 +4,31 @@ This project simulates an IPv6 topology using Linux network namespaces with In-S
 
 ---
 
+## 🎯 Project Goal and Motivation
+
+The goal of this project is to provide a hands-on simulation environment for experimenting with **In-Situ Operations, Administration, and Maintenance (IOAM)** in IPv6 networks.
+
+### 📌 What is IOAM?
+IOAM is a mechanism defined in [RFC 9197](https://datatracker.ietf.org/doc/rfc9197/) that enables routers and hosts to **embed operational metadata directly within packets**. This allows for:
+
+- Real-time path tracing without external probes
+- Network telemetry and performance monitoring
+- Troubleshooting and diagnostics with per-hop visibility
+
+### 🌐 Why This Matters
+Traditional tools like `ping` and `traceroute` provide limited visibility — they can only measure latency or hops, but not detailed per-hop behaviors (e.g., timestamp, ingress/egress interfaces, queue depth).
+
+**IOAM changes that** by enabling routers and nodes to write structured telemetry directly into packets as they traverse the network. This provides:
+
+- ✨ Per-hop insight into packet journey
+- 📊 Fine-grained latency and path analysis
+- 🔎 Debugging tools for production networks
+- 💡 Foundation for adaptive routing, automated fault detection, and performance-based forwarding
+
+This project makes it easier to understand, test, and visualize how IOAM works in a fully emulated environment using Linux namespaces.
+
+---
+
 ## 📁 Project Structure
 
 - `ioam_ipv6_4node_demo_v2.sh` – Bash script that creates a simulated network with 1 or 2 routers, configures IOAM, and runs a custom tracepath.
@@ -97,5 +122,12 @@ Receiving errors for TTL 1...
 - Linux with IOAM-enabled kernel (6.1+ or patched)
 - `iproute2` fork with IOAM support
 - Rebuilt `tracepath` (from iputils) with `tracepath.c` replaced
+
+---
+
+## 🧠 Credits
+
+Originally based on `tracepath` by Alexey Kuznetsov.  
+Extended by Omer Reuven to support IOAM decoding, Linux namespace simulation, and diagnostic tooling for research use.
 
 ---
