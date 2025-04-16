@@ -55,6 +55,69 @@ This project makes it easier to understand, test, and visualize how IOAM works i
 
 ---
 
+## 💻 Environment Setup Guide
+
+### 🧱 Prerequisites
+- Linux system (Ubuntu 20.04+ recommended)
+- Kernel version 6.1+ (or custom kernel with IOAM enabled)
+- GCC, make, flex, bison, and build-essential tools
+- Git and network namespace permissions (run as sudo or root)
+
+### 🛠️ Step-by-Step Setup
+
+1. **Download iproute2 (original site)**
+   - The official versions of iproute2 are available here:  
+     [https://mirrors.edge.kernel.org/pub/linux/utils/net/iproute2](https://mirrors.edge.kernel.org/pub/linux/utils/net/iproute2)
+
+   ❗ **Limitation**: These versions do not include IOAM features such as `ip ioam namespace` or `ip -6 route ... encap ioam6`.  
+   IOAM-specific capabilities require patching or using a fork.
+
+2. **Build and use a patched iproute2** (if available)
+   - If a fork with IOAM is available (e.g., Intel patches), compile it:
+     ```bash
+     git clone <patched-iproute2-repo> ~/iproute2_ioam
+     cd ~/iproute2_ioam
+     make -j$(nproc)
+     ```
+   - Use it in the script by overriding:
+     ```bash
+     IP_BIN="/home/omer/iproute2_ioam/ip/ip"
+     ```
+
+3. **Compile custom `tracepath`**
+   - Get `iputils` source:
+     ```bash
+     git clone https://github.com/iputils/iputils.git ~/iputils
+     ```
+   - Replace `tracepath.c` with the version from this repo
+   - Build it:
+     ```bash
+     cd ~/iputils
+     meson setup build
+     ninja -C build tracepath
+     ```
+
+4. **Run the simulation**
+   ```bash
+   cd ~/ioam_ipv6_demo
+   sudo ./ioam_ipv6_4node_demo_v2.sh
+   ```
+
+   ➤ The script will configure the topology, enable IOAM, and run tracepath
+
+5. **Inspect results**
+   - Look for IOAM output from custom tracepath
+   - View network namespaces:
+     ```bash
+     ip netns list
+     ```
+   - Cleanup manually if needed:
+     ```bash
+     sudo ip netns del host_a router1 router2 host_b
+     ```
+
+---
+
 ## 🛠️ Major Modifications to tracepath.c
 
 We extended the classic `tracepath` utility (from iputils) with support for parsing IPv6 Hop-by-Hop headers containing IOAM trace data (per RFC 9197):
@@ -127,6 +190,4 @@ Receiving errors for TTL 1...
 
 ## 🧠 Credits
 
-Originally based on `tracepath` by Alexey Kuznetsov.  
-
----
+Originally based on `tracepath` by Alexey Kuznetsov. 
