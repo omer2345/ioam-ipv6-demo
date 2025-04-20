@@ -26,14 +26,15 @@
 #include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
-
+#include <netinet/icmp6.h>
+#include <netinet/ip6.h>
 /*
  * Keep linux/ includes after standard headers.
  * https://github.com/iputils/iputils/issues/168
  */
 #include <linux/errqueue.h>
 #include <linux/icmp.h>
-#include <linux/icmpv6.h>
+//#include <linux/icmpv6.h>
 #include <linux/types.h>
 
 #include "iputils_common.h"
@@ -90,6 +91,7 @@ struct run_state {
 	void *pktbuf;
 	int hops_to;
 	int hops_from;
+	int icmp6_fd; // raw ICMPv6 socket
 	unsigned int
 		no_resolve:1,
 		show_both:1,
@@ -204,30 +206,79 @@ static int recverr(struct run_state *const ctl)
 	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
 		switch (cmsg->cmsg_level) {
 		case SOL_IPV6:
-			switch (cmsg->cmsg_type) {
+			printf("SOL_IPV6\n");
+			switch (cmsg->cmsg_level) {
 			case IPV6_RECVERR:
+				printf("IPV6_RECVERR\n");
+
 				e = (struct sock_extended_err *)CMSG_DATA(cmsg);
 				break;
 			case IPV6_HOPLIMIT:
-#ifdef IPV6_2292HOPLIMIT
+			printf("IPV6_HOPLIMIT\n");
+
+	#ifdef IPV6_2292HOPLIMIT
 			case IPV6_2292HOPLIMIT:
-#endif
+			printf("IPV6_2292HOPLIMIT\n");
+
+	#endif
 				memcpy(&rethops, CMSG_DATA(cmsg), sizeof(rethops));
 				break;
-			default:
-				printf(_("cmsg6:%d\n "), cmsg->cmsg_type);
+			default: {
+				unsigned char *data = (unsigned char *)CMSG_DATA(cmsg);
+				size_t len = cmsg->cmsg_len - CMSG_LEN(0);
+	
+				printf("cmsg6:%d, data length: %zu, first bytes: ", cmsg->cmsg_type, len);
+				for (size_t i = 0; i < len && i < 8; ++i) {
+					printf("0x%02x ", data[i]);
+				}
+				printf("\n");
+				uint8_t *data_start = (uint8_t *)CMSG_DATA(cmsg);
+				size_t data_len = cmsg->cmsg_len - CMSG_LEN(0);
+			
+				if (data_len < sizeof(struct sock_extended_err)) {
+					printf("CMSG too short to contain sock_extended_err\n");
+					break;
+				}
+			
+				e = (struct sock_extended_err *)data_start;
+				uint8_t *embedded = data_start + sizeof(struct sock_extended_err);
+				size_t embedded_len = data_len - sizeof(struct sock_extended_err);
+			
+				printf(">>> Embedded ICMP payload (%zu bytes):\n", embedded_len);
+				for (size_t i = 0; i < embedded_len && i < 64; i++) {
+					printf("0x%02x ", embedded[i]);
+					if (i % 8 == 7) printf("\n");
+				}
+				printf("\n");
+				if (len > 0 && data[0] == 0x0e) {
+					printf(">> IOAM Option Detected (0x0E) \n");
+				}
+				break;
+			}
 			}
 			break;
+	
 		case SOL_IP:
 			switch (cmsg->cmsg_type) {
 			case IP_RECVERR:
 				e = (struct sock_extended_err *)CMSG_DATA(cmsg);
+				printf("IP_RECVERR\n");
 				break;
 			case IP_TTL:
 				rethops = *(uint8_t *)CMSG_DATA(cmsg);
+				printf("TTL\n");
 				break;
-			default:
-				printf(_("cmsg4:%d\n "), cmsg->cmsg_type);
+			default: {
+				unsigned char *data = (unsigned char *)CMSG_DATA(cmsg);
+				size_t len = cmsg->cmsg_len - CMSG_LEN(0);
+	
+				printf("cmsg4:%d, data length: %zu, first bytes: ", cmsg->cmsg_type, len);
+				for (size_t i = 0; i < len && i < 8; ++i) {
+					printf("0x%02x ", data[i]);
+				}
+				printf("\n");
+				break;
+			}
 			}
 		}
 	}
@@ -320,8 +371,8 @@ static int recverr(struct run_state *const ctl)
 		     e->ee_type == ICMP_TIME_EXCEEDED &&
 		     e->ee_code == ICMP_EXC_TTL) ||
 		    (e->ee_origin == SO_EE_ORIGIN_ICMP6 &&
-		     e->ee_type == ICMPV6_TIME_EXCEED &&
-		     e->ee_code == ICMPV6_EXC_HOPLIMIT)) {
+				e->ee_type == ICMP6_TIME_EXCEEDED &&
+				e->ee_code == ICMP6_TIME_EXCEED_TRANSIT)) {
 			if (rethops >= 0) {
 				if ((sndhops >= 0 && rethops != sndhops) ||
 					(sndhops < 0 && rethops != ctl->ttl))
@@ -370,15 +421,31 @@ static int probe_ttl(struct run_state *const ctl)
 		clock_gettime(CLOCK_MONOTONIC, &hdr->ts);
 		ctl->his[ctl->hisptr].hops = ctl->ttl;
 		ctl->his[ctl->hisptr].sendtime = hdr->ts;
+		//TEST IOAM SUPPORT
+		if (ctl->icmp6_fd > 0){
+			int ret_raw = recv_icmp6_raw(ctl);
+				if (ret_raw == 0) {
+					printf("[raw socket] IOAM HBH detected in ICMPv6 reply!\n");
+				}
+				else{
+					printf("IOAM HBH NOT FOUND\n\n\n");
+				}
+			}
+			else{
+				printf("failed\n\n\n");
+			}
 		if (sendto(ctl->socket_fd, ctl->pktbuf, ctl->mtu - ctl->overhead, 0,
 			   (struct sockaddr *)&ctl->target, ctl->targetlen) > 0)
 			break;
 		res = recverr(ctl);
+
 		ctl->his[ctl->hisptr].hops = 0;
 		if (res == 0)
 			return 0;
 		if (res > 0)
 			goto restart;
+		
+
 	}
 	ctl->hisptr = (ctl->hisptr + 1) & (HIS_ARRAY_SIZE - 1);
 
@@ -515,9 +582,15 @@ int main(int argc, char **argv)
 		assert(ctl.ai != NULL);
 		if (ctl.ai->ai_family != AF_INET6 && ctl.ai->ai_family != AF_INET)
 			continue;
-		ctl.socket_fd = socket(ctl.ai->ai_family, ctl.ai->ai_socktype, ctl.ai->ai_protocol);
+		ctl.socket_fd = socket(ctl.ai->ai_family, ctl.ai->ai_socktype, ctl.ai->ai_protocol);		
 		if (ctl.socket_fd < 0)
 			continue;
+		//TEST IOAM SUPPORT
+		if (ctl.ai->ai_family == AF_INET6) {
+			ctl.icmp6_fd = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+			if (ctl.icmp6_fd < 0)
+				perror("raw icmp6 socket");
+		}
 		memcpy(&ctl.target, ctl.ai->ai_addr, ctl.ai->ai_addrlen);
 		ctl.targetlen = ctl.ai->ai_addrlen;
 		break;
@@ -618,7 +691,96 @@ int main(int argc, char **argv)
 		printf(_("back %d "), ctl.hops_from);
 	printf("\n");
 	exit(0);
-
+	if (ctl.icmp6_fd > 0)
+    	close(ctl.icmp6_fd);
  pktlen_error:
 	error(1, 0, _("pktlen must be within: %d < value <= %d"), ctl.overhead, INT_MAX);
+}
+
+int recv_icmp6_raw(struct run_state *ctl)
+{
+    uint8_t buf[2048];
+    struct sockaddr_in6 addr;
+    socklen_t addrlen = sizeof(addr);
+
+    ssize_t len = recvfrom(ctl->icmp6_fd, buf, sizeof(buf), MSG_DONTWAIT,
+                           (struct sockaddr *)&addr, &addrlen);
+    if (len < 0) {
+        perror("recvfrom raw icmp6");
+        return -1;
+    }
+
+    struct icmp6_hdr *icmp = (struct icmp6_hdr *)buf;
+
+    if (icmp->icmp6_type != ICMP6_TIME_EXCEEDED &&
+        icmp->icmp6_type != ICMP6_DST_UNREACH) {
+        return -1;
+    }
+
+    printf("\n[RAW ICMP6] ICMPv6 type: %d code: %d\n", icmp->icmp6_type, icmp->icmp6_code);
+
+    struct ip6_hdr *embedded = (struct ip6_hdr *)(buf + sizeof(struct icmp6_hdr));
+    if ((uint8_t *)embedded + sizeof(struct ip6_hdr) > buf + len)
+        return 1;
+
+    printf("[RAW ICMP6] Embedded IPv6 next header: %d\n", embedded->ip6_nxt);
+
+    if (embedded->ip6_nxt == IPPROTO_HOPOPTS) {
+        uint8_t *hbh = (uint8_t *)(embedded + 1);
+        uint8_t *ptr = hbh;
+        uint8_t hbh_len = (ptr[1] + 1) * 8;
+        uint8_t *end = ptr + hbh_len;
+
+        printf("[RAW ICMP6] HBH length: %u bytes\n", hbh_len);
+
+        ptr += 2; // Skip Next Header and Hdr Ext Len
+        while (ptr + 2 <= end) {
+            uint8_t opt_type = ptr[0];
+            if (opt_type == 0x00) { // Pad1
+                printf("[RAW ICMP6] Pad1\n");
+                ptr += 1;
+                continue;
+            }
+
+            uint8_t opt_len = ptr[1];
+            printf("[RAW ICMP6] Option type: 0x%02x, length: %u\n", opt_type, opt_len);
+
+            if (opt_type == 0x0e || opt_type == 0x31) {
+                printf("[RAW ICMP6] IOAM option found (0x%02x)!\n", opt_type);
+                uint8_t *ioam_data = ptr + 2;
+                size_t remaining = opt_len;
+                int hop_index = 0;
+
+                if (opt_type == 0x31) {
+                    if (remaining < 4) {
+                        printf("[RAW ICMP6] IOAM option too short\n");
+                        break;
+                    }
+                    ioam_data += 4; // skip: type, len, reserved, elts-left
+                    remaining -= 4;
+                }
+
+                while (remaining >= 8) {
+                    uint16_t node_id = (ioam_data[0] << 8) | ioam_data[1];
+                    uint32_t timestamp = (ioam_data[2] << 24) | (ioam_data[3] << 16) |
+                                         (ioam_data[4] << 8) | ioam_data[5];
+                    uint16_t ingress_if = (ioam_data[6] << 8) | ioam_data[7];
+
+                    printf("  [Hop %d] Node ID: %u, Timestamp: %u, IngressIf: %u\n",
+                           hop_index, node_id, timestamp, ingress_if);
+
+                    ioam_data += 8;
+                    remaining -= 8;
+                    hop_index++;
+                }
+
+                if (remaining > 0) {
+                    printf("[RAW ICMP6] Remaining %zu bytes unparsed\n", remaining);
+                }
+            }
+
+            ptr += 2 + opt_len;
+        }
+    }
+    return 0;
 }

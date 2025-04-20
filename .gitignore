@@ -1,10 +1,18 @@
-*~
-*.diff
-*.orig
-*.patch
-*.rej
-core
-.gdb_history
-.gdbinit
-# Meson build
-/builddir
+# Ignore build directories and files
+/build/
+**/build/
+**/build-*/     # Optional: matches Meson/CMake or other build dirs
+*.o
+*.a
+*.so
+*.exe
+*.out
+*.log
+*.swp
+*.tmp
+*.cache
+*.ninja
+.ninja_log
+.ninja_deps
+meson-*
+compile_commands.json
